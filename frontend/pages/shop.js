@@ -1,29 +1,30 @@
-import { useEffect, useMemo, useState } from "react";
+import Head from "next/head";
 import { useRouter } from "next/router";
+import { useMemo, useEffect, useState } from "react";
 import ProductCard from "../components/ProductCard";
+import ProductGridSkeleton from "../components/skeletons/ProductGridSkeleton";
 
-export default function ShopPage() {
+export default function ShopPage({ products, categories }) {
   const router = useRouter();
   const { category, maxPrice, search, sort } = router.query;
 
-  const [products, setProducts] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  /* ---------------- FETCH DATA ---------------- */
+  /* ---------------- UX LOADING STATE ---------------- */
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    Promise.all([
-      fetch("http://localhost:5000/api/products").then(r => r.json()),
-      fetch("http://localhost:5000/api/categories").then(r => r.json())
-    ])
-      .then(([productsData, categoriesData]) => {
-        setProducts(productsData);
-        setCategories(categoriesData.map(c => c.name));
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, []);
+    const start = () => setLoading(true);
+    const end = () => setLoading(false);
+
+    router.events.on("routeChangeStart", start);
+    router.events.on("routeChangeComplete", end);
+    router.events.on("routeChangeError", end);
+
+    return () => {
+      router.events.off("routeChangeStart", start);
+      router.events.off("routeChangeComplete", end);
+      router.events.off("routeChangeError", end);
+    };
+  }, [router]);
 
   /* ---------------- FILTER LOGIC ---------------- */
 
@@ -66,20 +67,29 @@ export default function ShopPage() {
     const params = new URLSearchParams(router.query);
     if (!value) params.delete(key);
     else params.set(key, value);
-    router.push(`/shop?${params.toString()}`);
+
+    router.push(`/shop?${params.toString()}`, undefined, {
+      shallow: true
+    });
   };
-
-  /* ---------------- UI ---------------- */
-
-  if (loading) {
-    return <p className="text-center mt-5">Loading shop...</p>;
-  }
 
   return (
     <>
-      <h1 className="mb-3 fw-semibold">Shop Jewellery</h1>
+      {/* ================= SEO ================= */}
+      <Head>
+        <title>Shop 925 Silver Jewellery | SIVAAH</title>
+        <meta
+          name="description"
+          content="Explore premium 925 silver jewellery by SIVAAH. Filter by category, price and intention to find jewellery that resonates with you."
+        />
+        <link rel="canonical" href="https://sivaah.in/shop" />
+      </Head>
 
-      {/* FILTER BAR */}
+      <h1 className="mb-4 fw-semibold text-center">
+        Shop Jewellery
+      </h1>
+
+      {/* ================= FILTER BAR ================= */}
       <div
         className="p-3 rounded mb-4"
         style={{
@@ -94,7 +104,7 @@ export default function ShopPage() {
           <div className="col-md-4">
             <input
               className="form-control"
-              placeholder="Search jewellery..."
+              placeholder="Search jewellery, category..."
               defaultValue={search || ""}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
@@ -113,7 +123,7 @@ export default function ShopPage() {
                 updateQuery("category", e.target.value)
               }
             >
-              <option value="">All Categories</option>
+              <option value="">All Collections</option>
               {categories.map((cat, i) => (
                 <option key={i} value={cat}>
                   {cat}
@@ -160,14 +170,14 @@ export default function ShopPage() {
               className="btn btn-outline-dark w-100"
               onClick={() => router.push("/shop")}
             >
-              ✕
+              Clear
             </button>
           </div>
         </div>
       </div>
 
-      {/* CATEGORY CHIPS */}
-      <div className="d-flex gap-2 flex-wrap mb-4">
+      {/* ================= CATEGORY CHIPS ================= */}
+      <div className="d-flex gap-2 flex-wrap mb-4 justify-content-center">
         {categories.map((cat, i) => (
           <button
             key={i}
@@ -185,9 +195,29 @@ export default function ShopPage() {
         ))}
       </div>
 
-      {/* PRODUCTS */}
-      {filteredProducts.length === 0 ? (
-        <p>No products found.</p>
+      {/* ================= PRODUCTS / SKELETON / EMPTY ================= */}
+      {loading ? (
+        <ProductGridSkeleton />
+      ) : filteredProducts.length === 0 ? (
+        <div
+          className="d-flex flex-column align-items-center justify-content-center text-center"
+          style={{ minHeight: "50vh" }}
+        >
+          <h3 className="fw-semibold mb-2">
+            We’re Crafting Something Beautiful ✨
+          </h3>
+          <p className="text-muted mb-4" style={{ maxWidth: 480 }}>
+            Our artisans are working on new designs with purpose and meaning.
+            Please check back soon — your next piece of intention is on its way.
+          </p>
+
+          <button
+            className="btn btn-dark"
+            onClick={() => router.push("/shop")}
+          >
+            Explore All Jewellery
+          </button>
+        </div>
       ) : (
         <div className="row g-4">
           {filteredProducts.map(product => (
@@ -199,4 +229,35 @@ export default function ShopPage() {
       )}
     </>
   );
+}
+
+/* ===============================
+   SERVER SIDE DATA FETCH (SEO)
+================================ */
+
+export async function getServerSideProps() {
+  try {
+    const [productsRes, categoriesRes] =
+      await Promise.all([
+        fetch("https://sivaahbackend.onrender.com/api/products"),
+        fetch("https://sivaahbackend.onrender.com/api/categories")
+      ]);
+
+    const products = await productsRes.json();
+    const categoriesRaw = await categoriesRes.json();
+
+    return {
+      props: {
+        products: products || [],
+        categories: categoriesRaw.map(c => c.name)
+      }
+    };
+  } catch (err) {
+    return {
+      props: {
+        products: [],
+        categories: []
+      }
+    };
+  }
 }
