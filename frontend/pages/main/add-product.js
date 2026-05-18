@@ -1,22 +1,29 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/router";
 import imageCompression from "browser-image-compression";
 
 export default function AddProduct() {
   const router = useRouter();
 
-  const token =
-    typeof window !== "undefined"
-      ? localStorage.getItem("token")
-      : null;
+const [token, setToken] = useState(null);
 
-  useEffect(() => {
-    if (!token) router.push("/main/login");
-  }, [token]);
+useEffect(() => {
+  const t = localStorage.getItem("token");
+
+  if (!t) {
+    router.push("/main/login");
+    return;
+  }
+
+  setToken(t);
+}, []);
+
 
   /* ---------------- STATES ---------------- */
 
   const [categories, setCategories] = useState([]);
+  const [silverRate, setSilverRate] = useState(null);
+
   const [images, setImages] = useState([]);
   const [preview, setPreview] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -25,12 +32,19 @@ export default function AddProduct() {
     name: "",
     subtitle: "",
     emotion: "Protection",
-    category: "",          // ✅ category NAME
+    category: "",
     description: "",
     benefits: "",
-    price: "",
+    grams: "",
+    labourPerGram: "",
     mrp: "",
     stock: "",
+
+    // 🔥 NEW SEO FIELDS
+    seoTitle: "",
+    seoDescription: "",
+    seoKeywords: "",
+
     isActive: true
   });
 
@@ -40,6 +54,15 @@ export default function AddProduct() {
     fetch("https://sivaahbackend.onrender.com/api/categories")
       .then(res => res.json())
       .then(setCategories)
+      .catch(console.error);
+  }, []);
+
+  /* ---------------- FETCH SILVER RATE ---------------- */
+
+  useEffect(() => {
+    fetch("https://sivaahbackend.onrender.com/api/rate")
+      .then(res => res.json())
+      .then(data => setSilverRate(data.rate))
       .catch(console.error);
   }, []);
 
@@ -59,7 +82,21 @@ export default function AddProduct() {
     setForm(prev => ({ ...prev, [name]: value }));
   };
 
-  /* ---------------- SMART IMAGE HANDLER ---------------- */
+  /* ---------------- AUTO PRICE CALCULATION ---------------- */
+
+  const calculatedPrice = useMemo(() => {
+    if (!silverRate || !form.grams || !form.labourPerGram) return "";
+
+    const grams = Number(form.grams);
+    const labour = Number(form.labourPerGram);
+
+    return Math.round(
+      grams * silverRate +
+      grams * labour
+    );
+  }, [silverRate, form.grams, form.labourPerGram]);
+
+  /* ---------------- IMAGE HANDLER ---------------- */
 
   const handleImages = async (e) => {
     const files = Array.from(e.target.files);
@@ -87,32 +124,58 @@ export default function AddProduct() {
 
   /* ---------------- IMAGE UPLOAD ---------------- */
 
-  const uploadImagesToServer = async () => {
+  // const uploadImagesToServer = async () => {
+  //   const formData = new FormData();
+  //   images.forEach(img => formData.append("images", img));
+
+  //   const res = await fetch("https://sivaahbackend.onrender.com/api/upload", {
+  //     method: "POST",
+  //     headers: { Authorization: `Bearer ${token}` },
+  //     body: formData
+  //   });
+
+  //   if (!res.ok) throw new Error("Image upload failed");
+
+  //   const data = await res.json();
+  //   return data.urls;
+  // };
+
+
+  const uploadImagesToCloudinary = async () => {
+  const uploadedUrls = [];
+
+  for (const image of images) {
     const formData = new FormData();
-    images.forEach(img => formData.append("images", img));
+    formData.append("file", image);
+    formData.append("upload_preset", "sivaah_products"); // your preset
 
-    const res = await fetch("https://sivaahbackend.onrender.com/api/upload", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`
-      },
-      body: formData
-    });
+    const res = await fetch(
+      "https://api.cloudinary.com/v1_1/dh61336lh/image/upload",
+      {
+        method: "POST",
+        body: formData
+      }
+    );
 
-    if (!res.ok) throw new Error("Image upload failed");
+    if (!res.ok) throw new Error("Cloudinary upload failed");
 
     const data = await res.json();
-    return data.urls;
-  };
+    uploadedUrls.push(data.secure_url);
+  }
+
+  return uploadedUrls;
+};
 
   /* ---------------- SUBMIT ---------------- */
 
   const submitProduct = async () => {
     if (
       !form.name ||
-      !form.price ||
       !form.stock ||
       !form.category ||
+      !form.grams ||
+      !form.labourPerGram ||
+      !calculatedPrice ||
       images.length === 0
     ) {
       alert("❌ Please fill all required fields");
@@ -122,19 +185,34 @@ export default function AddProduct() {
     setLoading(true);
 
     try {
-      const imageUrls = await uploadImagesToServer();
+      // const imageUrls = await uploadImagesToServer();
+      const imageUrls = await uploadImagesToCloudinary();
 
       const payload = {
         ...form,
-        slug: generateSlug(form.name), // ✅ AUTO SLUG
+
+        slug: generateSlug(form.name),
+
         benefits: form.benefits
           .split(",")
           .map(b => b.trim())
           .filter(Boolean),
-        price: Number(form.price),
+
+        grams: Number(form.grams),
+        labourPerGram: Number(form.labourPerGram),
+
+        price: calculatedPrice,
         mrp: Number(form.mrp),
         stock: Number(form.stock),
-        images: imageUrls
+
+        images: imageUrls,
+
+        // 🔥 SEND SEO DATA
+        seo: {
+          title: form.seoTitle,
+          description: form.seoDescription,
+          keywords: form.seoKeywords
+        }
       };
 
       const res = await fetch(
@@ -143,7 +221,8 @@ export default function AddProduct() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`
+           Authorization: `Bearer ${localStorage.getItem("token")?.trim()}`
+
           },
           body: JSON.stringify(payload)
         }
@@ -167,40 +246,21 @@ export default function AddProduct() {
     <div className="container mt-5">
       <h1>Add Product</h1>
 
-      <input
-        className="form-control mb-2"
-        placeholder="Name *"
-        name="name"
-        onChange={handleChange}
-      />
+      {!silverRate && (
+        <p className="text-danger">⚠️ Silver rate not loaded yet.</p>
+      )}
 
-      <input
-        className="form-control mb-2"
-        placeholder="Subtitle"
-        name="subtitle"
-        onChange={handleChange}
-      />
+      <input className="form-control mb-2" placeholder="Name *" name="name" onChange={handleChange} />
+      <input className="form-control mb-2" placeholder="Subtitle" name="subtitle" onChange={handleChange} />
 
-      {/* CATEGORY (NAME STORED) */}
-      <select
-        className="form-control mb-2"
-        name="category"
-        value={form.category}
-        onChange={handleChange}
-      >
+      <select className="form-control mb-2" name="category" value={form.category} onChange={handleChange}>
         <option value="">Select Category *</option>
         {categories.map(cat => (
-          <option key={cat._id} value={cat.name}>
-            {cat.name}
-          </option>
+          <option key={cat._id} value={cat.name}>{cat.name}</option>
         ))}
       </select>
 
-      <select
-        className="form-control mb-2"
-        name="emotion"
-        onChange={handleChange}
-      >
+      <select className="form-control mb-2" name="emotion" value={form.emotion} onChange={handleChange}>
         <option>Protection</option>
         <option>Strength</option>
         <option>Abundance</option>
@@ -214,74 +274,45 @@ export default function AddProduct() {
         <option>Care</option>
       </select>
 
-      <textarea
-        className="form-control mb-2"
-        placeholder="Description"
-        name="description"
-        onChange={handleChange}
-      />
+      <input className="form-control mb-2" name="grams" placeholder="Weight (grams)" type="number" onChange={handleChange} />
+      <input className="form-control mb-2" name="labourPerGram" placeholder="Labour ₹ per gram" type="number" onChange={handleChange} />
 
-      <textarea
-        className="form-control mb-2"
-        placeholder="Benefits (comma separated)"
-        name="benefits"
-        onChange={handleChange}
-      />
+      <div className="alert alert-light border fw-semibold">
+        Price (Auto): ₹ {calculatedPrice || "—"}
+      </div>
 
-      <input
-        className="form-control mb-2"
-        placeholder="Price *"
-        name="price"
-        type="number"
-        onChange={handleChange}
-      />
+      <textarea className="form-control mb-2" placeholder="Description" name="description" onChange={handleChange} />
+      <textarea className="form-control mb-2" placeholder="Benefits (comma separated)" name="benefits" onChange={handleChange} />
 
-      <input
-        className="form-control mb-2"
-        placeholder="MRP"
-        name="mrp"
-        type="number"
-        onChange={handleChange}
-      />
+      <input className="form-control mb-2" placeholder="MRP" name="mrp" type="number" onChange={handleChange} />
+      <input className="form-control mb-3" placeholder="Stock *" name="stock" type="number" onChange={handleChange} />
 
-      <input
-        className="form-control mb-3"
-        placeholder="Stock *"
-        name="stock"
-        type="number"
-        onChange={handleChange}
-      />
+      {/* 🔥 SEO SECTION */}
+      <hr />
+      <h5>SEO Settings (for Google Ranking)</h5>
 
-      <input
-        type="file"
-        className="form-control mb-3"
-        multiple
-        accept="image/*"
-        onChange={handleImages}
-      />
+      <input className="form-control mb-2" placeholder="SEO Title (Google Title)" name="seoTitle" onChange={handleChange} />
+      <textarea className="form-control mb-2" placeholder="SEO Description (Google Description)" name="seoDescription" onChange={handleChange} />
+      <input className="form-control mb-3" placeholder="SEO Keywords (comma separated)" name="seoKeywords" onChange={handleChange} />
+
+      <input type="file" className="form-control mb-3" multiple accept="image/*" onChange={handleImages} />
 
       {preview.length > 0 && (
         <div className="d-flex gap-2 flex-wrap mb-3">
           {preview.map((src, i) => (
-            <img
-              key={i}
-              src={src}
-              alt="preview"
-              width="80"
-              height="80"
-              style={{ objectFit: "cover", borderRadius: 6 }}
-            />
+            <img key={i} src={src} alt="preview" width="80" height="80" style={{ objectFit: "cover", borderRadius: 6 }} />
           ))}
         </div>
       )}
 
-      <button
-        className="btn btn-dark w-100"
-        onClick={submitProduct}
-        disabled={loading}
-      >
-        {loading ? "Uploading..." : "Add Product"}
-      </button>
+     <button
+  className="btn btn-dark w-100"
+  onClick={submitProduct}
+  disabled={loading || !token}
+>
+  {loading ? "Uploading..." : "Add Product"}
+</button>
+
     </div>
   );
 }

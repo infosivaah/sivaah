@@ -16,9 +16,9 @@ const ProductSchema = new mongoose.Schema({
   subtitle: String,
 
   emotion: {
-    type: String,
-    enum: ["Protection", "Strength", "Abundance"]
-  },
+  type: String,
+},
+
 
   description: String,
   benefits: [String],
@@ -32,8 +32,21 @@ const ProductSchema = new mongoose.Schema({
     type: String,
     default: "925 Silver"
   },
-
+seo: {
+  title: { type: String },
+  description: { type: String },
+  keywords: { type: String }
+},
   stock: Number,
+grams: {
+  type: Number,
+  required: true
+},
+
+labourPerGram: {
+  type: Number,
+  required: true
+},
 
   isActive: {
     type: Boolean,
